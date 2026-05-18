@@ -28,39 +28,13 @@ spread = client.open("Vultur Informes")
 hoja_clientes = spread.worksheet("Clientes")
 hoja_historico = spread.worksheet("Historico")
 
-st.success("✅ Sistema conectado")
+st.success("✅ Sistema conectado y listo para procesar CSVs")
 
 st.sidebar.header("Menú")
 opcion = st.sidebar.selectbox("Seleccionar sección", ["Generar Informe", "Gestionar Clientes"])
 
-# ===================== GESTIONAR CLIENTES =====================
-if opcion == "Gestionar Clientes":
-    st.header("👥 Gestión de Clientes")
-    df = pd.DataFrame(hoja_clientes.get_all_records())
-    st.dataframe(df, use_container_width=True)
-
-    st.subheader("Agregar Nuevo Cliente")
-    col1, col2 = st.columns(2)
-    with col1:
-        nombre = st.text_input("Nombre del Cliente *")
-        contacto = st.text_input("Nombre del Contacto")
-        email = st.text_input("Email")
-    with col2:
-        industria = st.text_input("Industria")
-        productos = st.text_area("Productos principales")
-    
-    publico = st.text_area("Público Objetivo")
-    objetivos = st.text_area("Objetivos de la marca")
-    contexto = st.text_area("Contexto completo para la IA")
-    
-    if st.button("Guardar Cliente"):
-        if nombre:
-            hoja_clientes.append_row([nombre, contacto, email, industria, productos, publico, objetivos, contexto, ""])
-            st.success("Cliente guardado")
-            st.rerun()
-
 # ===================== GENERAR INFORME =====================
-elif opcion == "Generar Informe":
+if opcion == "Generar Informe":
     st.header("🚀 Generar Informe Mensual")
 
     clientes = [r.get('Cliente', '') for r in hoja_clientes.get_all_records() if r.get('Cliente')]
@@ -69,50 +43,77 @@ elif opcion == "Generar Informe":
     # Periodos
     hoy = datetime.now()
     meses = [(hoy - timedelta(days=30*i)).strftime("%B %Y").capitalize() for i in range(6)]
-    historico_list = hoja_historico.get_all_records()
-    periodos_guardados = [row.get('Periodo') for row in historico_list if row.get('Cliente') == cliente_seleccionado]
+    historico = hoja_historico.get_all_records()
+    periodos_guardados = [row.get('Periodo') for row in historico if row.get('Cliente') == cliente_seleccionado]
     periodo = st.selectbox("Periodo", sorted(list(set(meses + periodos_guardados)), reverse=True))
 
-    st.subheader("📁 Subir archivos de Meta")
+    st.subheader("📁 Subir los 3 archivos de Meta")
     col1, col2, col3 = st.columns(3)
-    with col1: fb_file = st.file_uploader("CSV Facebook", type="csv", key=f"fb_{cliente_seleccionado}")
-    with col2: igp_file = st.file_uploader("CSV Posts Instagram", type="csv", key=f"igp_{cliente_seleccionado}")
-    with col3: igs_file = st.file_uploader("CSV Historias Instagram", type="csv", key=f"igs_{cliente_seleccionado}")
+    with col1: fb_file = st.file_uploader("CSV Facebook", type="csv")
+    with col2: ig_posts_file = st.file_uploader("CSV Posts Instagram", type="csv")
+    with col3: ig_stories_file = st.file_uploader("CSV Historias Instagram", type="csv")
 
-    notas = st.text_area("Notas adicionales del mes", height=100)
+    notas = st.text_area("Notas adicionales / contexto del mes", height=100)
 
     if st.button("🔥 Generar Informe con IA", type="primary"):
-        with st.spinner("Leyendo CSVs y analizando..."):
+        with st.spinner("Procesando archivos y generando informe..."):
             
-            resumen_datos = "No se subieron archivos.\n"
+            resumen_datos = f"Cliente: {cliente_seleccionado}\nPeriodo: {periodo}\n\n"
 
-            if fb_file is not None:
+            # === PROCESAMIENTO AVANZADO DE CSVs ===
+            if fb_file:
                 df_fb = pd.read_csv(fb_file)
-                resumen_datos += f"\n--- FACEBOOK ---\nFilas: {len(df_fb)}\n"
-                resumen_datos += df_fb.describe(include='all').to_string()[:1500]  # Resumen estadístico
+                resumen_datos += f"**FACEBOOK**\n"
+                resumen_datos += f"Total publicaciones: {len(df_fb)}\n"
+                if 'Reach' in df_fb.columns:
+                    resumen_datos += f"Alcance total: {df_fb['Reach'].sum():,}\n"
+                if 'Views' in df_fb.columns:
+                    resumen_datos += f"Vistas totales: {df_fb['Views'].sum():,}\n"
+                if 'Reactions' in df_fb.columns:
+                    resumen_datos += f"Reacciones totales: {df_fb['Reactions'].sum():,}\n"
 
-            if igp_file is not None:
-                df_ig = pd.read_csv(igp_file)
-                resumen_datos += f"\n\n--- INSTAGRAM POSTS ---\nFilas: {len(df_ig)}\n"
-                resumen_datos += df_ig.describe(include='all').to_string()[:1500]
+            if ig_posts_file:
+                df_ig = pd.read_csv(ig_posts_file)
+                resumen_datos += f"\n**INSTAGRAM POSTS**\n"
+                resumen_datos += f"Total publicaciones: {len(df_ig)}\n"
+                if 'Reach' in df_ig.columns:
+                    resumen_datos += f"Alcance total: {df_ig['Reach'].sum():,}\n"
+                if 'Views' in df_ig.columns:
+                    resumen_datos += f"Vistas totales: {df_ig['Views'].sum():,}\n"
+                if 'Likes' in df_ig.columns:
+                    resumen_datos += f"Likes totales: {df_ig['Likes'].sum():,}\n"
+                if 'Comments' in df_ig.columns:
+                    resumen_datos += f"Comentarios: {df_ig['Comments'].sum():,}\n"
 
-            contexto_row = next((r for r in hoja_clientes.get_all_records() if r.get('Cliente') == cliente_seleccionado), {})
-            contexto_cliente = contexto_row.get('ContextoAdicional', '')
+            if ig_stories_file:
+                df_stories = pd.read_csv(ig_stories_file)
+                resumen_datos += f"\n**INSTAGRAM STORIES**\n"
+                resumen_datos += f"Total stories: {len(df_stories)}\n"
+                if 'Reach' in df_stories.columns:
+                    resumen_datos += f"Alcance stories: {df_stories['Reach'].sum():,}\n"
+                if 'Views' in df_stories.columns:
+                    resumen_datos += f"Vistas stories: {df_stories['Views'].sum():,}\n"
 
-            st.subheader("📊 Datos enviados a la IA (debug)")
-            st.text_area("Resumen de datos", resumen_datos, height=200)
+            st.subheader("📊 Datos enviados a la IA")
+            st.text_area("Resumen extraído", resumen_datos, height=300)
 
-            prompt = f"""Eres redactor senior de Vultur 360. Usa **todos** los datos numéricos proporcionados para generar un informe realista y profesional.
+            # Prompt final
+            prompt = f"""Eres redactor senior de Vultur 360. Genera un informe mensual profesional, conciso y positivo usando **exactamente** los datos que te proporciono.
 
-Cliente: {cliente_seleccionado}
-Periodo: {periodo}
-Contexto marca: {contexto_cliente}
-Notas manuales: {notas}
-
-DATOS REALES DE META:
 {resumen_datos}
 
-Genera el informe completo siguiendo la estructura y tono del ejemplo que te mostré anteriormente."""
+Notas adicionales: {notas}
+
+Genera el informe completo siguiendo la estructura:
+- Saludo y fecha
+- Resumen General
+- Resultados Generales (por red)
+- Lectura del periodo
+- Contenido publicado
+- Publicaciones destacadas (si es posible)
+- Principales aprendizajes
+- Conclusión
+- Próximos pasos"""
 
             groq = get_groq_client()
             respuesta = groq.chat.completions.create(
@@ -124,8 +125,8 @@ Genera el informe completo siguiendo la estructura y tono del ejemplo que te mos
 
             texto_informe = respuesta.choices[0].message.content
 
-            st.subheader("📝 Vista Previa")
-            st.text_area("Informe generado", texto_informe, height=500)
+            st.subheader("📝 Vista Previa del Informe")
+            st.text_area("Informe generado", texto_informe, height=600)
 
             # PDF
             pdf = FPDF()
@@ -140,7 +141,7 @@ Genera el informe completo siguiendo la estructura y tono del ejemplo que te mos
 
             st.download_button("⬇️ Descargar PDF", pdf_bytes, f"Informe_{cliente_seleccionado}_{periodo}.pdf", "application/pdf")
 
-            # === GUARDAR EN HISTÓRICO ===
-            if st.button("💾 Guardar este informe en Histórico"):
-                hoja_historico.append_row([cliente_seleccionado, periodo, "", "", "", "", "", "", "", notas, texto_informe[:1000]])
-                st.success("Guardado en Histórico correctamente")
+            # Guardar histórico
+            if st.button("💾 Guardar en Histórico"):
+                hoja_historico.append_row([cliente_seleccionado, periodo, "", "", "", "", "", "", "", notas, texto_informe[:800]])
+                st.success("Guardado en Histórico")
