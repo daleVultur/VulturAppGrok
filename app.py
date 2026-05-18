@@ -3,15 +3,14 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
-from fpdf import FPDF
 from groq import Groq
+from fpdf import FPDF
 import io
 
 st.set_page_config(page_title="Vultur 360 Informes", layout="wide")
 st.title("🦅 Vultur 360 - Generador Automático de Informes Mensuales")
 
 # ==================== CONEXIONES ====================
-# ==================== CONEXIÓN GOOGLE SHEETS ====================
 @st.cache_resource
 def get_google_client():
     creds = Credentials.from_service_account_info(
@@ -34,87 +33,73 @@ spread = client.open("Vultur Informes")
 hoja_clientes = spread.worksheet("Clientes")
 hoja_historico = spread.worksheet("Historico")
 
-st.success("✅ Conectado a Google Sheets y listo para IA")
+st.success("✅ Conectado correctamente a Google Sheets")
 
-# Sidebar
+# ===================== SIDEBAR =====================
 st.sidebar.header("Menú")
-opcion = st.sidebar.selectbox("Ir a", ["Generar Informe", "Gestionar Clientes"])
+opcion = st.sidebar.selectbox("Seleccionar sección", ["Generar Informe", "Gestionar Clientes", "Ver Histórico"])
+
+# ===================== GESTIONAR CLIENTES =====================
+if opcion == "Gestionar Clientes":
+    st.header("👥 Gestión de Clientes")
+    
+    df_clientes = pd.DataFrame(hoja_clientes.get_all_records())
+    if not df_clientes.empty:
+        st.dataframe(df_clientes, use_container_width=True)
+    else:
+        st.info("No hay clientes registrados todavía.")
+
+    st.subheader("➕ Agregar Nuevo Cliente")
+    col1, col2 = st.columns(2)
+    with col1:
+        nombre = st.text_input("Nombre del Cliente *")
+        contacto = st.text_input("Nombre del Contacto")
+        email = st.text_input("Email del Contacto")
+    with col2:
+        industria = st.text_input("Industria")
+        productos = st.text_area("Productos / Servicios principales", height=100)
+    
+    publico = st.text_area("Público Objetivo", height=80)
+    objetivos = st.text_area("Objetivos principales de la marca", height=80)
+    contexto = st.text_area("Contexto adicional / Antecedentes / Mercado (importante para la IA)", height=120)
+    
+    if st.button("💾 Guardar Cliente"):
+        if nombre.strip():
+            nueva_fila = [nombre, contacto, email, industria, productos, publico, objetivos, contexto, ""]
+            hoja_clientes.append_row(nueva_fila)
+            st.success(f"✅ Cliente '{nombre}' guardado correctamente")
+            st.rerun()
+        else:
+            st.error("El nombre del cliente es obligatorio")
 
 # ===================== GENERAR INFORME =====================
-if opcion == "Generar Informe":
-    st.header("🚀 Generar Nuevo Informe")
+elif opcion == "Generar Informe":
+    st.header("🚀 Generar Nuevo Informe Mensual")
+    
+    clientes = [row.get('Cliente', '') for row in hoja_clientes.get_all_records() if row.get('Cliente')]
+    
+    if not clientes:
+        st.warning("Primero agrega clientes en la sección 'Gestionar Clientes'")
+    else:
+        col1, col2 = st.columns(2)
+        with col1:
+            cliente_seleccionado = st.selectbox("Seleccionar Cliente", options=clientes)
+        with col2:
+            periodo = st.text_input("Periodo del informe", value=datetime.now().strftime("%B %Y").capitalize())
 
-    clientes = [row['Cliente'] for row in hoja_clientes.get_all_records() if row.get('Cliente')]
-    cliente_seleccionado = st.selectbox("Cliente", options=clientes)
-    periodo = st.text_input("Periodo", value=datetime.now().strftime("%B %Y").capitalize())
+        st.subheader("📁 Subir archivos de Meta")
+        colf, colip, colis = st.columns(3)
+        with colf:
+            fb_file = st.file_uploader("CSV Facebook", type="csv")
+        with colip:
+            ig_posts = st.file_uploader("CSV Posts Instagram", type="csv")
+        with colis:
+            ig_stories = st.file_uploader("CSV Historias Instagram", type="csv")
 
-    st.subheader("Archivos Meta")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        fb_file = st.file_uploader("CSV Facebook", type="csv")
-    with col2:
-        ig_posts = st.file_uploader("CSV Posts IG", type="csv")
-    with col3:
-        ig_stories = st.file_uploader("CSV Stories IG", type="csv")
+        notas = st.text_area("Notas manuales o contexto extra del mes", height=100)
 
-    notas = st.text_area("Notas manuales / contexto extra", height=100)
+        if st.button("🔥 Generar Informe con IA", type="primary"):
+            with st.spinner("Procesando datos y generando informe..."):
+                st.info("✅ Archivos recibidos. La generación con IA estará lista en la próxima actualización.")
 
-    if st.button("🔥 Generar Informe con IA", type="primary"):
-        with st.spinner("Procesando CSVs + Generando informe..."):
-            # Leer CSVs (básico por ahora)
-            df_fb = pd.read_csv(fb_file) if fb_file else pd.DataFrame()
-            df_igp = pd.read_csv(ig_posts) if ig_posts else pd.DataFrame()
-
-            # Buscar contexto del cliente
-            contexto_row = next((row for row in hoja_clientes.get_all_records() if row.get('Cliente') == cliente_seleccionado), {})
-            contexto = contexto_row.get('ContextoAdicional', 'Sin contexto previo.')
-
-            # Prompt poderoso
-            prompt = f"""Eres un consultor senior de Vultur 360. 
-Genera un informe mensual **exactamente** en el estilo, tono y estructura del ejemplo que te doy a continuación.
-Mantén el mismo nivel de profesionalismo, concisión y siempre resalta positivamente el valor del trabajo de la agencia.
-
-**EJEMPLO DE INFORME (usa esta estructura y tono):**
-[Copia aquí todo el texto del informe de IOGO que me enviaste antes]
-
-Cliente actual: {cliente_seleccionado}
-Periodo: {periodo}
-Contexto de la marca: {contexto}
-Notas del mes: {notas}
-
-Datos disponibles:
-Facebook: {len(df_fb)} filas
-Instagram Posts: {len(df_igp)} filas
-
-Genera el informe completo listo para enviar al cliente.
-"""
-
-            groq = get_groq_client()
-            response = groq.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7,
-                max_tokens=4000
-            )
-
-            informe_texto = response.choices[0].message.content
-
-            st.subheader("📄 Vista Previa del Informe")
-            st.text_area("Informe generado", informe_texto, height=500)
-
-            # Generar PDF básico
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", size=12)
-            pdf.multi_cell(0, 10, informe_texto)
-
-            pdf_bytes = pdf.output(dest="S").encode("latin1")
-
-            st.download_button(
-                label="⬇️ Descargar PDF",
-                data=pdf_bytes,
-                file_name=f"Informe_{cliente_seleccionado}_{periodo}.pdf",
-                mime="application/pdf"
-            )
-
-            st.success("¡Informe generado correctamente!")
+st.sidebar.info("Versión en desarrollo • Mayo 2026")
