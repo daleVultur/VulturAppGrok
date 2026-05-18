@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime
+from datetime import datetime, timedelta
 from groq import Groq
 from fpdf import FPDF
 import io
@@ -31,7 +31,7 @@ hoja_historico = spread.worksheet("Historico")
 st.success("✅ Sistema conectado y listo")
 
 st.sidebar.header("Menú")
-opcion = st.sidebar.selectbox("Seleccionar sección", ["Generar Informe", "Gestionar Clientes"])
+opcion = st.sidebar.selectbox("Seleccionar sección", ["Generar Informe", "Gestionar Clientes", "Ver Histórico"])
 
 # ===================== GESTIONAR CLIENTES =====================
 if opcion == "Gestionar Clientes":
@@ -59,70 +59,86 @@ if opcion == "Gestionar Clientes":
             st.success("Cliente guardado")
             st.rerun()
 
-# ===================== GENERAR INFORME =====================
+# ===================== GENERAR / VER INFORME =====================
 elif opcion == "Generar Informe":
-    st.header("🚀 Generar Informe Mensual")
+    st.header("🚀 Generar o Ver Informe Mensual")
 
     clientes = [r.get('Cliente', '') for r in hoja_clientes.get_all_records() if r.get('Cliente')]
-    if not clientes:
-        st.warning("Agrega clientes primero")
-    else:
-        cliente_seleccionado = st.selectbox("Cliente", clientes)
-        periodo = st.text_input("Periodo", datetime.now().strftime("%B %Y").capitalize())
+    cliente_seleccionado = st.selectbox("Cliente", clientes)
 
-        st.subheader("Archivos de Meta")
-        c1, c2, c3 = st.columns(3)
-        with c1: fb = st.file_uploader("CSV Facebook", type="csv")
-        with c2: igp = st.file_uploader("CSV Posts Instagram", type="csv")
-        with c3: igs = st.file_uploader("CSV Historias Instagram", type="csv")
+    # === Dropdown inteligente de Periodos ===
+    hoy = datetime.now()
+    meses = []
+    for i in range(4):  # Mes actual + 3 anteriores
+        fecha = hoy - timedelta(days=30*i)
+        meses.append(fecha.strftime("%B %Y").capitalize())
 
-        notas = st.text_area("Notas adicionales del mes", height=80)
+    # Obtener periodos ya guardados en histórico
+    historico_existente = hoja_historico.get_all_records()
+    periodos_guardados = [row.get('Periodo') for row in historico_existente if row.get('Cliente') == cliente_seleccionado]
+    periodos_guardados = list(dict.fromkeys(periodos_guardados))  # eliminar duplicados
 
-        if st.button("🔥 Generar Informe Completo con IA", type="primary"):
-            with st.spinner("Analizando archivos y generando informe..."):
-                df_fb = pd.read_csv(fb) if fb is not None else pd.DataFrame()
-                df_ig_posts = pd.read_csv(igp) if igp is not None else pd.DataFrame()
+    todos_los_periodos = sorted(list(set(meses + periodos_guardados)), reverse=True)
+    periodo = st.selectbox("Periodo", options=todos_los_periodos)
 
-                contexto_row = next((r for r in hoja_clientes.get_all_records() if r.get('Cliente') == cliente_seleccionado), {})
-                contexto_cliente = contexto_row.get('ContextoAdicional', 'Sin contexto adicional.')
+    # Ver si ya existe histórico para este periodo
+    datos_historico = [row for row in historico_existente if row.get('Cliente') == cliente_seleccionado and row.get('Periodo') == periodo]
 
-                prompt = f"""Eres el redactor senior de Vultur 360. Genera un informe mensual exactamente en el mismo estilo, tono y estructura del ejemplo que conoces.
+    st.subheader("Archivos de Meta (solo si es nuevo)")
+    c1, c2, c3 = st.columns(3)
+    with c1: fb = st.file_uploader("CSV Facebook", type="csv", key="fb")
+    with c2: igp = st.file_uploader("CSV Posts Instagram", type="csv", key="igp")
+    with c3: igs = st.file_uploader("CSV Historias Instagram", type="csv", key="igs")
+
+    notas = st.text_area("Notas adicionales del mes", height=80, value=datos_historico[0].get('NotasManuales', '') if datos_historico else "")
+
+    if st.button("🔥 Generar Informe con IA", type="primary"):
+        with st.spinner("Procesando..."):
+            contexto_row = next((r for r in hoja_clientes.get_all_records() if r.get('Cliente') == cliente_seleccionado), {})
+            contexto_cliente = contexto_row.get('ContextoAdicional', '')
+
+            prompt = f"""Eres redactor senior de Vultur 360. Genera informe en el estilo exacto del ejemplo que conoces.
 
 Cliente: {cliente_seleccionado}
 Periodo: {periodo}
-Contexto de la marca: {contexto_cliente}
-Notas del mes: {notas}
+Contexto: {contexto_cliente}
+Notas: {notas}
 
-Datos: Facebook ({len(df_fb)} registros), Instagram Posts ({len(df_ig_posts)} registros)
+Genera el informe completo."""
 
-Genera el informe completo en español, profesional y conciso."""
+            groq = get_groq_client()
+            respuesta = groq.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.65,
+                max_tokens=4000
+            )
 
-                groq = get_groq_client()
-                respuesta = groq.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.65,
-                    max_tokens=4000
-                )
+            texto_informe = respuesta.choices[0].message.content
 
-                texto_informe = respuesta.choices[0].message.content
+            st.subheader("📝 Vista Previa")
+            st.text_area("Informe", texto_informe, height=500)
 
-                st.subheader("📝 Vista Previa del Informe")
-                st.text_area("Informe", texto_informe, height=500)
+            # === PDF ===
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Arial", size=11)
+            for line in texto_informe.split('\n'):
+                pdf.multi_cell(0, 8, line.encode('latin-1', 'replace').decode('latin-1'))
+            
+            pdf_bytes = pdf.output(dest='S').encode('latin-1', 'replace')
 
-                # === PDF CORREGIDO para fpdf2 ===
-                pdf = FPDF()
-                pdf.add_page()
-                pdf.set_font("Arial", size=11)
-                pdf.multi_cell(0, 8, texto_informe.encode('latin-1', 'replace').decode('latin-1'))
+            st.download_button(
+                label="⬇️ Descargar PDF",
+                data=pdf_bytes,
+                file_name=f"Informe_{cliente_seleccionado}_{periodo}.pdf",
+                mime="application/pdf"
+            )
 
-                pdf_bytes = pdf.output()   # ← Esta es la forma correcta en fpdf2
+            # Guardar en Histórico (solo si no existe o se quiere actualizar)
+            if st.button("💾 Guardar este informe en Histórico"):
+                nueva_fila = [cliente_seleccionado, periodo, "", "", "", "", "", "", "", notas, texto_informe[:500]]
+                hoja_historico.append_row(nueva_fila)
+                st.success("Informe guardado en histórico")
 
-                st.download_button(
-                    label="⬇️ Descargar PDF",
-                    data=pdf_bytes,
-                    file_name=f"Informe_{cliente_seleccionado}_{periodo}.pdf",
-                    mime="application/pdf"
-                )
-
-                st.success("¡Informe generado correctamente!")
+st.sidebar.info("Histórico automático activado")
