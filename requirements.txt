@@ -3,4 +3,5 @@ pandas
 gspread
 google-auth
 fpdf2
+groq
 python-dotenv
