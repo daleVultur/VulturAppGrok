@@ -11,9 +11,18 @@ st.set_page_config(page_title="Vultur 360 Informes", layout="wide")
 st.title("🦅 Vultur 360 - Generador Automático de Informes Mensuales")
 
 # ==================== CONEXIONES ====================
+# ==================== CONEXIÓN GOOGLE SHEETS ====================
 @st.cache_resource
 def get_google_client():
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=[
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/drive",
+            "https://www.googleapis.com/auth/drive.file",
+            "https://www.googleapis.com/auth/spreadsheets"
+        ]
+    )
     return gspread.authorize(creds)
 
 @st.cache_resource
